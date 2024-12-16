@@ -1,0 +1,79 @@
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mssql-secrets
+type: Opaque
+data:
+  mssql-connection-string: U2VydmVyPW1zc3FsLmRlZmF1bHQuc3ZjLmNsdXN0ZXIubG9jYWw7UG9ydD0xNDMzO0RhdGFiYXNlPW1hc3RlcjtQZXJzaXN0IFNlY3VyaXR5IEluZm89RmFsc2U7VXNlciBJRD1zYTtQYXNzd29yZD1tc3NxbFNlY3JldFBhc3N3b3JkMTI7VHJ1c3RTZXJ2ZXJDZXJ0aWZpY2F0ZT1UcnVlO0Nvbm5lY3Rpb24gVGltZW91dD0zMDs=
+---
+apiVersion: keda.sh/v1alpha1
+kind: TriggerAuthentication
+metadata:
+  name: keda-trigger-auth-mssql-secret
+spec:
+  secretTargetRef:
+  - parameter: connectionString
+    name: mssql-secrets
+    key: mssql-connection-string
+---
+apiVersion: keda.sh/v1alpha1
+# kind: ScaledObject
+kind: ScaledJob
+metadata:
+  name: container-scaler-1
+  namespace: default
+spec:
+  jobTargetRef:
+    template:
+      spec:
+        shareProcessNamespace: true
+        containers:
+        - name: container-countdown
+          image: fedora:latest
+          command: ["sleep", "55"]
+          securityContext:
+            runAsUser: 1000
+        - name: alma
+          securityContext:
+            runAsUser: 0
+          image: docker.io/library/bash:5
+          command: ["bash", "-c"]        # example command simulating a bug which triggers the FailJob action
+          args:
+          - |
+            echo "Hello world!"
+            sleep 5
+            echo "Pretend this is real logic"
+            exit_code=0
+            pkill -15 -u 1000
+            sleep 10
+            # for sidecar_dependency in container-countdown
+            # do
+            #   if [ $exit_code -ne 0 ]
+            #   then
+            #     # -9 forcefully kills the process which causes it to exit
+            #     # with code 137
+            #     echo $sidecar_dependency
+            #     pkill -9 $sidecar_dependency
+            #   else
+            #     # pkill with no options will kill the process in a way it can
+            #     # exit gracefully with code 0
+            #     echo $sidecar_dependency
+            #     pkill $sidecar_dependency
+            #   fi
+            # done
+
+            # # after all sidecars have been shut down, exit this primary container
+            # # with the original exit code returned from your business logic
+            exit $exit_code
+        restartPolicy: Never
+    backoffLimit: 1
+  triggers:
+    - type: mssql
+      metadata:
+        query: "SELECT COUNT(*) FROM jobsForScale"
+        targetValue: "1"
+      authenticationRef:
+        name: keda-trigger-auth-mssql-secret
+
+
+
